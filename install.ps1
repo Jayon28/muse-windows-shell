@@ -13,6 +13,38 @@ New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Copy-Item (Join-Path $publish '*') $dest -Recurse -Force
 $exe = Join-Path $dest 'Muse.exe'
 
+# 运行时检查：缺 .NET 6 桌面运行时或 WebView2 时，先用 Redist\ 里的官方安装包静默装；
+# Redist 里没有就打印微软官网地址，让用户自己下载。
+$redist = Join-Path $root 'Redist'
+function Test-DotNet6Desktop {
+    $base = Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.WindowsDesktop.App'
+    return (Test-Path $base) -and [bool](Get-ChildItem $base -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '6.*' })
+}
+function Test-WebView2 {
+    foreach ($p in 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+                   'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}') {
+        $pv = (Get-ItemProperty -Path $p -Name pv -ErrorAction SilentlyContinue).pv
+        if ($pv -and $pv -ne '0.0.0.0') { return $true }
+    }
+    return $false
+}
+if (-not (Test-DotNet6Desktop)) {
+    $pkg = Join-Path $redist 'windowsdesktop-runtime-6.0-win-x64.exe'
+    if (Test-Path $pkg) {
+        Write-Host '未检测到 .NET 6 桌面运行时，用 Redist 里的安装包安装…'
+        Start-Process $pkg -ArgumentList '/install /quiet /norestart' -Wait
+    }
+    if (-not (Test-DotNet6Desktop)) { Write-Host '仍缺 .NET 6 桌面运行时，请到微软官网下载：https://dotnet.microsoft.com/download/dotnet/6.0' }
+}
+if (-not (Test-WebView2)) {
+    $pkg = Join-Path $redist 'MicrosoftEdgeWebView2RuntimeInstallerX64.exe'
+    if (Test-Path $pkg) {
+        Write-Host '未检测到 WebView2 运行时，用 Redist 里的安装包安装…'
+        Start-Process $pkg -ArgumentList '/silent /install' -Wait
+    }
+    if (-not (Test-WebView2)) { Write-Host '仍缺 WebView2 运行时，请到微软官网下载：https://developer.microsoft.com/microsoft-edge/webview2/' }
+}
+
 $shell = New-Object -ComObject WScript.Shell
 # 桌面实际路径从注册表读，兼容 OneDrive 重定向
 $desktop = $shell.SpecialFolders.Item('Desktop')

@@ -12,3 +12,4 @@ Desktop.ini
 .vs/
 publish-dist/
 *.zip
+Redist/
