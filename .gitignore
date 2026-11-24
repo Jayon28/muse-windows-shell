@@ -1,0 +1,14 @@
+# 编译产物
+bin/
+obj/
+publish/
+# 本地数据（登录态、设置）绝不进仓库
+*.user
+WebView2Data/
+settings.json
+# 系统杂项
+Thumbs.db
+Desktop.ini
+.vs/
+publish-dist/
+*.zip
