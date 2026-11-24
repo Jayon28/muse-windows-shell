@@ -41,6 +41,10 @@ internal sealed class Settings
     public int WindowY { get; set; } = -1;
     public int WindowWidth { get; set; } = 1200;
     public int WindowHeight { get; set; } = 800;
+    // 页面缩放（WebView2 的 ZoomFactor 不会自动持久化，必须自己存，自己恢复）
+    public double ZoomFactor { get; set; } = 1.0;
+    // 运行时检测只在第一次成功启动时跑，跑过就不再打扰；托盘菜单可手动重检
+    public bool RuntimeCheckDone { get; set; } = false;
 
     public static string FilePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -135,7 +139,7 @@ internal sealed class MainForm : Form
         FormClosing += OnFormClosing;
         Move += (_, _) => SaveWindowBounds();
         Resize += (_, _) => SaveWindowBounds();
-        Shown += async (_, _) => await InitWebViewAsync();
+        Shown += async (_, _) => await StartupAsync();
         // 第二个实例（重复点快捷方式）会发信号，让已经开着的这份把窗口呼出来。
         Task.Run(() =>
         {
@@ -180,6 +184,24 @@ internal sealed class MainForm : Form
         base.WndProc(ref m);
     }
 
+    // 启动流程：第一次启动先做运行时检测（有进度条的窗口），通过后才初始化 WebView2。
+    // 检测没过（缺 WebView2）就退出，不留一个打不开页面的空壳在托盘里。
+    private async Task StartupAsync()
+    {
+        if (!_settings.RuntimeCheckDone)
+        {
+            bool ok = await RuntimeCheckDialog.RunAsync(this);
+            if (!ok)
+            {
+                ExitApp();
+                return;
+            }
+            _settings.RuntimeCheckDone = true;
+            _settings.Save();
+        }
+        await InitWebViewAsync();
+    }
+
     // WebView2 初始化：数据目录独立持久（登录态就存在这里），首页 muse.ai。
     private async Task InitWebViewAsync()
     {
@@ -189,6 +211,14 @@ internal sealed class MainForm : Form
         var env = await CoreWebView2Environment.CreateAsync(null, dataDir);
         await _webView.EnsureCoreWebView2Async(env);
         var core = _webView.CoreWebView2;
+        // 恢复上次的页面缩放；用户在页面里 Ctrl +/- 改了缩放就立刻记下来，下次不丢。
+        if (_settings.ZoomFactor > 0.1 && _settings.ZoomFactor < 5.0)
+            _webView.ZoomFactor = _settings.ZoomFactor;
+        _webView.ZoomFactorChanged += (_, _) =>
+        {
+            _settings.ZoomFactor = _webView.ZoomFactor;
+            _settings.Save();
+        };
         core.NewWindowRequested += OnNewWindowRequested;
         core.PermissionRequested += OnPermissionRequested;
         core.Navigate(HomeUrl);
@@ -229,6 +259,7 @@ internal sealed class MainForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add("打开 Muse for Windows", null, (_, _) => ShowWindow());
         menu.Items.Add("设置快捷键…（当前：" + _settings.HotkeyText() + "）", null, (_, _) => ShowHotkeySettings());
+        menu.Items.Add("重新检测运行时", null, async (_, _) => await RuntimeCheckDialog.RunAsync(this));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => ExitApp());
         _tray.ContextMenuStrip = menu;
@@ -384,5 +415,115 @@ internal sealed class HotkeyDialog : Form
             _settings.HotkeyKey = _key;
         }
         base.OnFormClosed(e);
+    }
+}
+
+// ---------- 运行时检测窗口 ----------
+
+// 第一次启动时检查依赖的运行时是否正常：带进度条，每项结果都列出来。
+// 缺 WebView2 时给出微软官网下载入口；.NET 缺失时程序根本起不来，
+// Windows 自带的 apphost 弹窗会引导去微软下载页（README 里也写了地址）。
+internal sealed class RuntimeCheckDialog : Form
+{
+    private const string WebView2DownloadUrl = "https://developer.microsoft.com/microsoft-edge/webview2/";
+    private const string DotNetDownloadUrl = "https://dotnet.microsoft.com/download/dotnet/6.0";
+
+    private readonly Label _step = new();
+    private readonly ProgressBar _bar = new();
+    private readonly ListBox _log = new();
+    private readonly Button _downloadButton = new();
+    private readonly Button _closeButton = new();
+    private bool _success;
+
+    private RuntimeCheckDialog()
+    {
+        Text = "Muse for Windows 运行时检测";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterScreen;
+        ClientSize = new Size(440, 300);
+        Font = new Font("Microsoft YaHei UI", 9F);
+
+        var title = new Label
+        {
+            Text = "正在检测运行所需的组件…",
+            Location = new Point(16, 14),
+            Size = new Size(408, 22),
+            Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold),
+        };
+        _step.Location = new Point(16, 44);
+        _step.Size = new Size(408, 20);
+        _bar.Location = new Point(16, 68);
+        _bar.Size = new Size(408, 16);
+        _bar.Minimum = 0;
+        _bar.Maximum = 100;
+        _log.Location = new Point(16, 94);
+        _log.Size = new Size(408, 130);
+        _downloadButton.Text = "去微软官网下载 WebView2";
+        _downloadButton.Location = new Point(16, 238);
+        _downloadButton.Size = new Size(200, 30);
+        _downloadButton.Visible = false;
+        _downloadButton.Click += (_, _) => Process.Start(new ProcessStartInfo(WebView2DownloadUrl) { UseShellExecute = true });
+        _closeButton.Text = "检测中…";
+        _closeButton.Location = new Point(324, 238);
+        _closeButton.Size = new Size(100, 30);
+        _closeButton.Enabled = false;
+        _closeButton.Click += (_, _) => Close();
+        Controls.Add(title);
+        Controls.Add(_step);
+        Controls.Add(_bar);
+        Controls.Add(_log);
+        Controls.Add(_downloadButton);
+        Controls.Add(_closeButton);
+        Shown += async (_, _) => await RunChecksAsync();
+    }
+
+    // 显示检测窗口并等它关掉；返回检测是否全部通过。
+    public static Task<bool> RunAsync(IWin32Window owner)
+    {
+        using var dialog = new RuntimeCheckDialog();
+        dialog.ShowDialog(owner);
+        return Task.FromResult(dialog._success);
+    }
+
+    private async Task RunChecksAsync()
+    {
+        // 1) .NET 运行时：程序能跑到这里就说明它在，报一下实际版本。
+        _step.Text = "检测 .NET 运行时…";
+        await Task.Delay(350);
+        _log.Items.Add("✓ .NET 运行时正常（" + RuntimeInformation.FrameworkDescription + "）");
+        _bar.Value = 40;
+
+        // 2) WebView2 运行时：查不到版本号就是没装。
+        _step.Text = "检测 WebView2 运行时…";
+        await Task.Delay(350);
+        string? version = null;
+        try { version = CoreWebView2Environment.GetAvailableBrowserVersionString(); }
+        catch { /* 没装时这里抛异常，按缺失处理 */ }
+        if (string.IsNullOrEmpty(version))
+        {
+            _log.Items.Add("✗ 没有检测到 WebView2 运行时，页面将无法打开。");
+            _log.Items.Add("  请点下面的按钮去微软官网下载安装，装好后重新打开本程序。");
+            _log.Items.Add("  （.NET 6 桌面运行时下载： " + DotNetDownloadUrl + " ）");
+            _bar.Value = 100;
+            _step.Text = "检测未通过";
+            _downloadButton.Visible = true;
+            _closeButton.Text = "退出";
+            _closeButton.Enabled = true;
+            _success = false;
+            return;
+        }
+        _log.Items.Add("✓ WebView2 运行时正常（版本 " + version + "）");
+        _bar.Value = 80;
+
+        await Task.Delay(300);
+        _bar.Value = 100;
+        _step.Text = "检测完成，一切正常";
+        _success = true;
+        _closeButton.Text = "完成";
+        _closeButton.Enabled = true;
+        await Task.Delay(900);
+        if (!IsDisposed) Close();
     }
 }
