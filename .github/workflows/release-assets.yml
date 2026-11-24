@@ -1,9 +1,18 @@
-# 把发行包和所需的微软运行时安装包挂到已有的 GitHub Release 上。
-# 手动触发（workflow_dispatch）；用仓库自带的 GITHUB_TOKEN 上传，不需要任何个人令牌。
+# 把发行包和所需的微软运行时安装包挂到对应的 GitHub Release 上。
+# 触发方式：推送 v* 标签时自动跑（标签名即 Release 名），或在 Actions 页手动触发并填标签。
+# 上传用仓库自带的 GITHUB_TOKEN，不需要任何个人令牌。
 name: Attach release assets
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release 标签（如 v1.0.0）'
+        required: true
+        default: 'v1.0.0'
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -21,9 +30,10 @@ jobs:
       - name: Publish app (framework-dependent)
         shell: pwsh
         run: |
+          $tag = "${{ inputs.tag || github.ref_name }}"
           dotnet publish src/MuseShell/MuseShell.csproj -c Release -o publish-dist
           Copy-Item *.txt publish-dist/ -ErrorAction SilentlyContinue
-          Compress-Archive -Path publish-dist/* -DestinationPath MuseForWindows-v1.0.0-win-x64.zip -Force
+          Compress-Archive -Path publish-dist/* -DestinationPath "MuseForWindows-$tag-win-x64.zip" -Force
 
       - name: Download Microsoft runtimes (official links)
         shell: pwsh
@@ -31,9 +41,10 @@ jobs:
           Invoke-WebRequest -Uri "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe" -OutFile windowsdesktop-runtime-6.0-win-x64.exe
           Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2124701" -OutFile MicrosoftEdgeWebView2RuntimeInstallerX64.exe
 
-      - name: Upload assets to the v1.0.0 release
+      - name: Upload assets to the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload v1.0.0 MuseForWindows-v1.0.0-win-x64.zip windowsdesktop-runtime-6.0-win-x64.exe MicrosoftEdgeWebView2RuntimeInstallerX64.exe --clobber
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          gh release upload $tag "MuseForWindows-$tag-win-x64.zip" windowsdesktop-runtime-6.0-win-x64.exe MicrosoftEdgeWebView2RuntimeInstallerX64.exe --clobber
