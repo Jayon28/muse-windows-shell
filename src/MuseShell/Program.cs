@@ -3,6 +3,7 @@
 // 登录状态保存在本机独立的 WebView2 数据目录里，不碰 Chrome 的登录态。
 using System.Diagnostics;
 using System.Globalization;
+using System.Net.Http;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -114,6 +115,11 @@ internal static class Strings
         ["CheckTitle"] = "Muse for Windows 运行时检测",
         ["CheckIntro"] = "正在检测运行所需的组件…",
         ["CheckDownload"] = "去微软官网下载 WebView2",
+        ["CheckAutoInstall"] = "自动下载并安装 WebView2",
+        ["CheckWebBtn"] = "微软官网",
+        ["CheckDownloading"] = "正在下载 WebView2 安装包… {0}%",
+        ["CheckInstalling"] = "正在安装 WebView2…",
+        ["CheckAutoFailed"] = "✗ 自动下载/安装失败，请点「微软官网」手动下载安装，装好后重新打开本程序。",
         ["CheckBusy"] = "检测中…",
         ["CheckStepDotNet"] = "检测 .NET 运行时…",
         ["CheckDotNetOk"] = "✓ .NET 运行时正常（{0}）",
@@ -144,6 +150,11 @@ internal static class Strings
         ["CheckTitle"] = "Muse for Windows runtime check",
         ["CheckIntro"] = "Checking the components this app needs…",
         ["CheckDownload"] = "Download WebView2 from Microsoft",
+        ["CheckAutoInstall"] = "Download & install WebView2",
+        ["CheckWebBtn"] = "Microsoft site",
+        ["CheckDownloading"] = "Downloading the WebView2 installer… {0}%",
+        ["CheckInstalling"] = "Installing WebView2…",
+        ["CheckAutoFailed"] = "✗ Automatic install failed. Please use the Microsoft site button to install it manually, then reopen this app.",
         ["CheckBusy"] = "Checking…",
         ["CheckStepDotNet"] = "Checking the .NET runtime…",
         ["CheckDotNetOk"] = "✓ .NET runtime OK ({0})",
@@ -569,12 +580,15 @@ internal sealed class HotkeyDialog : Form
 internal sealed class RuntimeCheckDialog : Form
 {
     private const string WebView2DownloadUrl = "https://developer.microsoft.com/microsoft-edge/webview2/";
+    // WebView2 离线安装包的微软官方直链（fwlink），程序自己下载安装时用
+    private const string WebView2StandaloneUrl = "https://go.microsoft.com/fwlink/?linkid=2124701";
     private const string DotNetDownloadUrl = "https://dotnet.microsoft.com/download/dotnet/6.0";
 
     private readonly Label _step = new();
     private readonly ProgressBar _bar = new();
     private readonly ListBox _log = new();
     private readonly Button _downloadButton = new();
+    private readonly Button _webButton = new();
     private readonly Button _closeButton = new();
     private bool _success;
 
@@ -603,11 +617,16 @@ internal sealed class RuntimeCheckDialog : Form
         _bar.Maximum = 100;
         _log.Location = new Point(16, 94);
         _log.Size = new Size(408, 130);
-        _downloadButton.Text = Strings.Get("CheckDownload");
+        _downloadButton.Text = Strings.Get("CheckAutoInstall");
         _downloadButton.Location = new Point(16, 238);
-        _downloadButton.Size = new Size(200, 30);
+        _downloadButton.Size = new Size(196, 30);
         _downloadButton.Visible = false;
-        _downloadButton.Click += (_, _) => Process.Start(new ProcessStartInfo(WebView2DownloadUrl) { UseShellExecute = true });
+        _downloadButton.Click += async (_, _) => await AutoInstallWebView2Async();
+        _webButton.Text = Strings.Get("CheckWebBtn");
+        _webButton.Location = new Point(220, 238);
+        _webButton.Size = new Size(96, 30);
+        _webButton.Visible = false;
+        _webButton.Click += (_, _) => Process.Start(new ProcessStartInfo(WebView2DownloadUrl) { UseShellExecute = true });
         _closeButton.Text = Strings.Get("CheckBusy");
         _closeButton.Location = new Point(324, 238);
         _closeButton.Size = new Size(100, 30);
@@ -618,6 +637,7 @@ internal sealed class RuntimeCheckDialog : Form
         Controls.Add(_bar);
         Controls.Add(_log);
         Controls.Add(_downloadButton);
+        Controls.Add(_webButton);
         Controls.Add(_closeButton);
         Shown += async (_, _) => await RunChecksAsync();
     }
@@ -628,6 +648,64 @@ internal sealed class RuntimeCheckDialog : Form
         using var dialog = new RuntimeCheckDialog();
         dialog.ShowDialog(owner);
         return Task.FromResult(dialog._success);
+    }
+
+
+    // 缺 WebView2 时一键搞定：从微软直链下载离线安装包（进度实时显示），静默装好，再复检。
+    private async Task AutoInstallWebView2Async()
+    {
+        _downloadButton.Enabled = false;
+        _webButton.Enabled = false;
+        string installer = Path.Combine(Path.GetTempPath(), "MicrosoftEdgeWebView2RuntimeInstallerX64.exe");
+        try
+        {
+            using var http = new HttpClient();
+            using var resp = await http.GetAsync(WebView2StandaloneUrl, HttpCompletionOption.ResponseHeadersRead);
+            resp.EnsureSuccessStatusCode();
+            long total = resp.Content.Headers.ContentLength ?? -1;
+            await using (var fs = File.Create(installer))
+            {
+                var stream = await resp.Content.ReadAsStreamAsync();
+                var buffer = new byte[81920];
+                long done = 0;
+                int read;
+                while ((read = await stream.ReadAsync(buffer)) > 0)
+                {
+                    await fs.WriteAsync(buffer.AsMemory(0, read));
+                    done += read;
+                    if (total > 0)
+                    {
+                        int pct = (int)(done * 100 / total);
+                        _bar.Value = pct;
+                        _step.Text = Strings.Format("CheckDownloading", pct);
+                    }
+                }
+            }
+            _step.Text = Strings.Get("CheckInstalling");
+            var proc = Process.Start(new ProcessStartInfo(installer, "/silent /install") { UseShellExecute = true });
+            if (proc != null) await proc.WaitForExitAsync();
+            string? version = null;
+            try { version = CoreWebView2Environment.GetAvailableBrowserVersionString(); }
+            catch { /* 还是没装好就按失败处理 */ }
+            if (string.IsNullOrEmpty(version)) throw new InvalidOperationException("WebView2 still missing");
+            _log.Items.Add(Strings.Format("CheckWv2Ok", version));
+            _bar.Value = 100;
+            _step.Text = Strings.Get("CheckAllOk");
+            _success = true;
+            _downloadButton.Visible = false;
+            _webButton.Visible = false;
+            _closeButton.Text = Strings.Get("BtnDone");
+            _closeButton.Enabled = true;
+            await Task.Delay(900);
+            if (!IsDisposed) Close();
+        }
+        catch
+        {
+            _log.Items.Add(Strings.Get("CheckAutoFailed"));
+            _step.Text = Strings.Get("CheckFailed");
+            _downloadButton.Enabled = true;
+            _webButton.Enabled = true;
+        }
     }
 
     private async Task RunChecksAsync()
@@ -652,6 +730,7 @@ internal sealed class RuntimeCheckDialog : Form
             _bar.Value = 100;
             _step.Text = Strings.Get("CheckFailed");
             _downloadButton.Visible = true;
+            _webButton.Visible = true;
             _closeButton.Text = Strings.Get("BtnExit");
             _closeButton.Enabled = true;
             _success = false;

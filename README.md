@@ -11,7 +11,7 @@ Muse 官方目前只有网页版、iOS、Android 和 Mac 应用，没有 Windows
 - **托盘常驻**：开机登录后静默自启到系统托盘；点窗口的 × 只是缩回托盘，托盘右键菜单才能真正退出。
 - **全局快捷键**：默认 `Ctrl+Alt+N`，在任何软件里按一下呼出窗口、再按一下收起。可在托盘菜单「设置快捷键…」里改，改完立即生效。
 - **缩放记忆**：在页面里用 Ctrl +/- 调的缩放会记下来，退出重开不丢失。
-- **运行时检测**：第一次启动会弹出带进度条的检测窗，确认 .NET 与 WebView2 运行时正常；通过后不再打扰。托盘菜单里有「重新检测运行时」可随时手动重检；缺组件时检测窗会引导去微软官网下载。
+- **运行时检测**：第一次启动会弹出带进度条的检测窗，确认 .NET 与 WebView2 运行时正常；通过后不再打扰。托盘菜单里有「重新检测运行时」可随时手动重检；缺 WebView2 时检测窗里点一下就能自动从微软直链下载并装好（带进度），也可以去微软官网手动下载。
 - **多语言界面**：默认跟随系统——中文系统显示中文，其他语言的系统一律显示英文；托盘菜单「语言 / Language」里可手动切换（跟随系统 / 简体中文 / English），立即生效并记住。
 - **独立登录**：登录状态保存在本机独立的 WebView2 数据目录里，第一次打开时登录一次，之后持久保持；不跟 Chrome 的登录态互相干扰。
 - **外链分流**：muse.ai 站内跳转留在壳里；以新窗口打开的外站链接自动用系统默认浏览器打开。
@@ -97,7 +97,7 @@ Built with WebView2 (the Edge engine) + .NET 6 WinForms, and deliberately kept s
 - **Tray resident**: starts silently in the system tray at logon; clicking the window's × only hides it to the tray — quitting is done from the tray menu.
 - **Global hotkey**: `Ctrl+Alt+N` by default; press it anywhere to summon the window, press again to hide it. Changeable from the tray menu ("Set hotkey…"), effective immediately.
 - **Zoom memory**: page zoom set with Ctrl +/- is remembered across restarts.
-- **Runtime check**: on first launch a small window with a progress bar verifies the .NET and WebView2 runtimes; once passed it never appears again. "Re-check runtimes" in the tray menu runs it on demand, and missing components are linked to Microsoft's download pages.
+- **Runtime check**: on first launch a small window with a progress bar verifies the .NET and WebView2 runtimes; once passed it never appears again. "Re-check runtimes" in the tray menu runs it on demand, and if WebView2 is missing, the check window can download it from Microsoft's direct link and install it automatically (with progress), or you can install it manually from Microsoft's site.
 - **Multilingual UI**: follows your system language by default — Chinese on Chinese systems, English on everything else. Switch any time from the tray menu under "语言 / Language" (Follow system / 简体中文 / English); takes effect immediately and is remembered.
 - **Independent sign-in**: your session lives in a private local WebView2 data folder — sign in once inside the shell and it persists; it neither uses nor disturbs your Chrome session.
 - **External links**: navigation inside muse.ai stays in the shell; links that open a new window to external sites are handed to your default browser.

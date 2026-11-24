@@ -13,7 +13,7 @@ Muse for Windows（免安装版）
 前置条件（缺了打不开）：
 - .NET 6 桌面运行时：可从 GitHub 仓库根目录的 Redist 文件夹下载，也可从微软官网下载
   https://dotnet.microsoft.com/download/dotnet/6.0
-- WebView2 运行时：Win11 自带；没有的话第一次启动的检测窗会引导下载，
+- WebView2 运行时：Win11 自带；没有的话第一次启动的检测窗里点一下就自动下载装好，
   也可以从 GitHub 仓库根目录的 Redist 文件夹下载，或从微软官网下载
   https://developer.microsoft.com/microsoft-edge/webview2/
 第一次启动会先弹一个检测窗确认这两样都在，通过后就不再出现；
@@ -39,7 +39,7 @@ How to use:
 Prerequisites (the app won't start without them):
 - .NET 6 Desktop Runtime: download it from the Redist folder at the root of the GitHub repo, or from Microsoft:
   https://dotnet.microsoft.com/download/dotnet/6.0
-- WebView2 Runtime: built into Windows 11; if missing, the first-launch check window will guide you,
+- WebView2 Runtime: built into Windows 11; if missing, one click in the first-launch check window downloads and installs it automatically,
   or download it from the Redist folder at the root of the GitHub repo, or from Microsoft:
   https://developer.microsoft.com/microsoft-edge/webview2/
 On first launch a check window confirms both are present; once passed it never shows again.
