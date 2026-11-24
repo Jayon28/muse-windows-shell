@@ -29,7 +29,7 @@ Muse 官方目前只有网页版、iOS、Android 和 Mac 应用，没有 Windows
 - **.NET 6 桌面运行时**：缺了程序双击打不开（系统弹窗会引导下载），也可去微软官网下载：https://dotnet.microsoft.com/download/dotnet/6.0
 - **WebView2 运行时**：Win11 自带；没有的话第一次启动的检测窗会引导，或去微软官网下载：https://developer.microsoft.com/microsoft-edge/webview2/
 
-仓库根目录的 `Redist\` 里备有一份这两个运行时的官方安装包（体积大，不进 git）：在本仓库里运行 `install.ps1` 时若检测到缺失，会自动先用 Redist 里的装；没有 Redist 时按上面的官网地址下载即可。
+这两个运行时的官方安装包就放在本仓库根目录的 `Redist\` 文件夹里（用 Git LFS 托管，点开即可下载）：在本仓库里运行 `install.ps1` 时若检测到缺失，会自动先用 Redist 里的装；也可以按上面的官网地址下载。
 
 ## 安装
 
