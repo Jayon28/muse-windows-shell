@@ -13,6 +13,10 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+    paths:
+      - '.github/workflows/release-assets.yml'
 
 permissions:
   contents: write
@@ -30,7 +34,8 @@ jobs:
       - name: Publish app (framework-dependent)
         shell: pwsh
         run: |
-          $tag = "${{ inputs.tag || github.ref_name }}"
+          $tag = "${{ inputs.tag }}"
+          if (-not $tag) { $tag = if ("${{ github.ref_name }}" -like 'v*') { "${{ github.ref_name }}" } else { 'v1.0.0' } }
           dotnet publish src/MuseShell/MuseShell.csproj -c Release -o publish-dist
           Copy-Item *.txt publish-dist/ -ErrorAction SilentlyContinue
           Compress-Archive -Path publish-dist/* -DestinationPath "MuseForWindows-$tag-win-x64.zip" -Force
@@ -46,5 +51,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "${{ inputs.tag || github.ref_name }}"
+          $tag = "${{ inputs.tag }}"
+          if (-not $tag) { $tag = if ("${{ github.ref_name }}" -like 'v*') { "${{ github.ref_name }}" } else { 'v1.0.0' } }
           gh release upload $tag "MuseForWindows-$tag-win-x64.zip" windowsdesktop-runtime-6.0-win-x64.exe MicrosoftEdgeWebView2RuntimeInstallerX64.exe --clobber
