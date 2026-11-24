@@ -2,6 +2,7 @@
 // 把 muse.ai 包进一个原生 Windows 应用：托盘常驻、全局快捷键、外链走默认浏览器。
 // 登录状态保存在本机独立的 WebView2 数据目录里，不碰 Chrome 的登录态。
 using System.Diagnostics;
+using System.Globalization;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -47,6 +48,8 @@ internal sealed class Settings
     public bool WindowMaximized { get; set; } = false;
     // 运行时检测只在第一次成功启动时跑，跑过就不再打扰；托盘菜单可手动重检
     public bool RuntimeCheckDone { get; set; } = false;
+    // 界面语言："system" 跟随系统（中文系统用中文、其他用英文），或手动指定 "zh" / "en"
+    public string Language { get; set; } = "system";
 
     public static string FilePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -88,6 +91,94 @@ internal sealed class Settings
     }
 }
 
+
+// ---------- 界面语言 ----------
+
+// 全部界面文字集中在这里，按当前语言取。默认跟随系统：系统界面语言是中文就用中文，
+// 其他任何语言一律用英文兜底；用户也可以在托盘菜单里手动指定，存进 Settings.Language。
+internal static class Strings
+{
+    private static readonly Dictionary<string, string> Zh = new()
+    {
+        ["TrayOpen"] = "打开 Muse for Windows",
+        ["TrayHotkey"] = "设置快捷键…（当前：{0}）",
+        ["TrayRecheck"] = "重新检测运行时",
+        ["TrayLangSystem"] = "跟随系统",
+        ["TrayExit"] = "退出",
+        ["BalloonFailTitle"] = "Muse for Windows 快捷键注册失败",
+        ["BalloonFailBody"] = "快捷键 {0} 可能被其他程序占用了。右键托盘图标选「设置快捷键…」换一个组合。",
+        ["HotkeyTitle"] = "设置全局快捷键",
+        ["HotkeyPrompt"] = "在下方输入框里按一遍新组合键：",
+        ["BtnSave"] = "保存",
+        ["BtnCancel"] = "取消",
+        ["CheckTitle"] = "Muse for Windows 运行时检测",
+        ["CheckIntro"] = "正在检测运行所需的组件…",
+        ["CheckDownload"] = "去微软官网下载 WebView2",
+        ["CheckBusy"] = "检测中…",
+        ["CheckStepDotNet"] = "检测 .NET 运行时…",
+        ["CheckDotNetOk"] = "✓ .NET 运行时正常（{0}）",
+        ["CheckStepWv2"] = "检测 WebView2 运行时…",
+        ["CheckWv2Ok"] = "✓ WebView2 运行时正常（版本 {0}）",
+        ["CheckWv2Missing1"] = "✗ 没有检测到 WebView2 运行时，页面将无法打开。",
+        ["CheckWv2Missing2"] = "  请点下面的按钮去微软官网下载安装，装好后重新打开本程序。",
+        ["CheckWv2Missing3"] = "  （.NET 6 桌面运行时下载：{0}）",
+        ["CheckFailed"] = "检测未通过",
+        ["BtnExit"] = "退出",
+        ["CheckAllOk"] = "检测完成，一切正常",
+        ["BtnDone"] = "完成",
+    };
+
+    private static readonly Dictionary<string, string> En = new()
+    {
+        ["TrayOpen"] = "Open Muse for Windows",
+        ["TrayHotkey"] = "Set hotkey… (current: {0})",
+        ["TrayRecheck"] = "Re-check runtimes",
+        ["TrayLangSystem"] = "Follow system",
+        ["TrayExit"] = "Exit",
+        ["BalloonFailTitle"] = "Muse for Windows: hotkey registration failed",
+        ["BalloonFailBody"] = "The hotkey {0} may already be used by another app. Right-click the tray icon and choose \"Set hotkey…\" to pick a different combination.",
+        ["HotkeyTitle"] = "Set global hotkey",
+        ["HotkeyPrompt"] = "Press the new key combination in the box below:",
+        ["BtnSave"] = "Save",
+        ["BtnCancel"] = "Cancel",
+        ["CheckTitle"] = "Muse for Windows runtime check",
+        ["CheckIntro"] = "Checking the components this app needs…",
+        ["CheckDownload"] = "Download WebView2 from Microsoft",
+        ["CheckBusy"] = "Checking…",
+        ["CheckStepDotNet"] = "Checking the .NET runtime…",
+        ["CheckDotNetOk"] = "✓ .NET runtime OK ({0})",
+        ["CheckStepWv2"] = "Checking the WebView2 runtime…",
+        ["CheckWv2Ok"] = "✓ WebView2 runtime OK (version {0})",
+        ["CheckWv2Missing1"] = "✗ WebView2 runtime not found — pages cannot be displayed.",
+        ["CheckWv2Missing2"] = "  Use the button below to download and install it from Microsoft, then reopen this app.",
+        ["CheckWv2Missing3"] = "  (.NET 6 Desktop Runtime download: {0})",
+        ["CheckFailed"] = "Check failed",
+        ["BtnExit"] = "Exit",
+        ["CheckAllOk"] = "All checks passed",
+        ["BtnDone"] = "Done",
+    };
+
+    // 当前生效的语言："zh" 或 "en"
+    public static string Current { get; private set; } = "en";
+
+    public static void Init(string setting)
+    {
+        Current = setting switch
+        {
+            "zh" => "zh",
+            "en" => "en",
+            _ => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh" : "en",
+        };
+    }
+
+    public static string Get(string key) =>
+        (Current == "zh" ? Zh : En).TryGetValue(key, out var v) ? v
+        : En.TryGetValue(key, out var fallback) ? fallback
+        : key;
+
+    public static string Format(string key, params object[] args) => string.Format(Get(key), args);
+}
+
 // ---------- 快捷键 ----------
 
 internal static class Hotkey
@@ -123,6 +214,7 @@ internal sealed class MainForm : Form
     public MainForm(bool autostart)
     {
         _settings = Settings.Load();
+        Strings.Init(_settings.Language);
         _startHidden = autostart;
         Text = "Muse for Windows";
         Icon = new Icon(Path.Combine(AppContext.BaseDirectory, "app.ico"));
@@ -261,12 +353,31 @@ internal sealed class MainForm : Form
         _tray.Visible = true;
         _tray.DoubleClick += (_, _) => ToggleWindow();
         var menu = new ContextMenuStrip();
-        menu.Items.Add("打开 Muse for Windows", null, (_, _) => ShowWindow());
-        menu.Items.Add("设置快捷键…（当前：" + _settings.HotkeyText() + "）", null, (_, _) => ShowHotkeySettings());
-        menu.Items.Add("重新检测运行时", null, async (_, _) => await RuntimeCheckDialog.RunAsync(this));
+        menu.Items.Add(Strings.Get("TrayOpen"), null, (_, _) => ShowWindow());
+        menu.Items.Add(Strings.Format("TrayHotkey", _settings.HotkeyText()), null, (_, _) => ShowHotkeySettings());
+        menu.Items.Add(Strings.Get("TrayRecheck"), null, async (_, _) => await RuntimeCheckDialog.RunAsync(this));
+        // 语言菜单标题双语并排，保证任何语言下都找得到这一项；语言名用各自原文。
+        var langMenu = new ToolStripMenuItem("语言 / Language");
+        langMenu.DropDownItems.Add(LanguageItem(Strings.Get("TrayLangSystem"), "system"));
+        langMenu.DropDownItems.Add(LanguageItem("简体中文", "zh"));
+        langMenu.DropDownItems.Add(LanguageItem("English", "en"));
+        menu.Items.Add(langMenu);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("退出", null, (_, _) => ExitApp());
+        menu.Items.Add(Strings.Get("TrayExit"), null, (_, _) => ExitApp());
         _tray.ContextMenuStrip = menu;
+    }
+
+    private ToolStripMenuItem LanguageItem(string text, string value)
+    {
+        var item = new ToolStripMenuItem(text) { Checked = _settings.Language == value };
+        item.Click += (_, _) =>
+        {
+            _settings.Language = value;
+            _settings.Save();
+            Strings.Init(value);
+            BuildTray(); // 菜单文字立刻换成新语言
+        };
+        return item;
     }
 
     private void ShowHotkeySettings()
@@ -289,9 +400,8 @@ internal sealed class MainForm : Form
         if (!ok)
         {
             // 注册失败多半是被别的程序占用（错误 1409），绝不能默默吞掉。
-            _tray.ShowBalloonTip(5000, "Muse for Windows 快捷键注册失败",
-                "快捷键 " + _settings.HotkeyText() + " 可能被其他程序占用了。" +
-                "右键托盘图标选「设置快捷键…」换一个组合。", ToolTipIcon.Warning);
+            _tray.ShowBalloonTip(5000, Strings.Get("BalloonFailTitle"),
+                Strings.Format("BalloonFailBody", _settings.HotkeyText()), ToolTipIcon.Warning);
         }
     }
 
@@ -397,7 +507,7 @@ internal sealed class HotkeyDialog : Form
         _settings = settings;
         _modifiers = settings.HotkeyModifiers;
         _key = settings.HotkeyKey;
-        Text = "设置全局快捷键";
+        Text = Strings.Get("HotkeyTitle");
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -405,14 +515,14 @@ internal sealed class HotkeyDialog : Form
         Size = new Size(360, 150);
         var label = new Label
         {
-            Text = "在下方输入框里按一遍新组合键：",
+            Text = Strings.Get("HotkeyPrompt"),
             Dock = DockStyle.Top,
             Height = 24,
             Padding = new Padding(8, 8, 8, 0),
         };
         _box.KeyDown += OnKeyDown;
-        var save = new Button { Text = "保存", DialogResult = DialogResult.OK, Dock = DockStyle.Right, Width = 90 };
-        var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Dock = DockStyle.Right, Width = 90 };
+        var save = new Button { Text = Strings.Get("BtnSave"), DialogResult = DialogResult.OK, Dock = DockStyle.Right, Width = 90 };
+        var cancel = new Button { Text = Strings.Get("BtnCancel"), DialogResult = DialogResult.Cancel, Dock = DockStyle.Right, Width = 90 };
         var panel = new Panel { Dock = DockStyle.Bottom, Height = 44, Padding = new Padding(8) };
         panel.Controls.Add(save);
         panel.Controls.Add(cancel);
@@ -470,7 +580,7 @@ internal sealed class RuntimeCheckDialog : Form
 
     private RuntimeCheckDialog()
     {
-        Text = "Muse for Windows 运行时检测";
+        Text = Strings.Get("CheckTitle");
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -480,7 +590,7 @@ internal sealed class RuntimeCheckDialog : Form
 
         var title = new Label
         {
-            Text = "正在检测运行所需的组件…",
+            Text = Strings.Get("CheckIntro"),
             Location = new Point(16, 14),
             Size = new Size(408, 22),
             Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold),
@@ -493,12 +603,12 @@ internal sealed class RuntimeCheckDialog : Form
         _bar.Maximum = 100;
         _log.Location = new Point(16, 94);
         _log.Size = new Size(408, 130);
-        _downloadButton.Text = "去微软官网下载 WebView2";
+        _downloadButton.Text = Strings.Get("CheckDownload");
         _downloadButton.Location = new Point(16, 238);
         _downloadButton.Size = new Size(200, 30);
         _downloadButton.Visible = false;
         _downloadButton.Click += (_, _) => Process.Start(new ProcessStartInfo(WebView2DownloadUrl) { UseShellExecute = true });
-        _closeButton.Text = "检测中…";
+        _closeButton.Text = Strings.Get("CheckBusy");
         _closeButton.Location = new Point(324, 238);
         _closeButton.Size = new Size(100, 30);
         _closeButton.Enabled = false;
@@ -523,38 +633,38 @@ internal sealed class RuntimeCheckDialog : Form
     private async Task RunChecksAsync()
     {
         // 1) .NET 运行时：程序能跑到这里就说明它在，报一下实际版本。
-        _step.Text = "检测 .NET 运行时…";
+        _step.Text = Strings.Get("CheckStepDotNet");
         await Task.Delay(350);
-        _log.Items.Add("✓ .NET 运行时正常（" + RuntimeInformation.FrameworkDescription + "）");
+        _log.Items.Add(Strings.Format("CheckDotNetOk", RuntimeInformation.FrameworkDescription));
         _bar.Value = 40;
 
         // 2) WebView2 运行时：查不到版本号就是没装。
-        _step.Text = "检测 WebView2 运行时…";
+        _step.Text = Strings.Get("CheckStepWv2");
         await Task.Delay(350);
         string? version = null;
         try { version = CoreWebView2Environment.GetAvailableBrowserVersionString(); }
         catch { /* 没装时这里抛异常，按缺失处理 */ }
         if (string.IsNullOrEmpty(version))
         {
-            _log.Items.Add("✗ 没有检测到 WebView2 运行时，页面将无法打开。");
-            _log.Items.Add("  请点下面的按钮去微软官网下载安装，装好后重新打开本程序。");
-            _log.Items.Add("  （.NET 6 桌面运行时下载： " + DotNetDownloadUrl + " ）");
+            _log.Items.Add(Strings.Get("CheckWv2Missing1"));
+            _log.Items.Add(Strings.Get("CheckWv2Missing2"));
+            _log.Items.Add(Strings.Format("CheckWv2Missing3", DotNetDownloadUrl));
             _bar.Value = 100;
-            _step.Text = "检测未通过";
+            _step.Text = Strings.Get("CheckFailed");
             _downloadButton.Visible = true;
-            _closeButton.Text = "退出";
+            _closeButton.Text = Strings.Get("BtnExit");
             _closeButton.Enabled = true;
             _success = false;
             return;
         }
-        _log.Items.Add("✓ WebView2 运行时正常（版本 " + version + "）");
+        _log.Items.Add(Strings.Format("CheckWv2Ok", version));
         _bar.Value = 80;
 
         await Task.Delay(300);
         _bar.Value = 100;
-        _step.Text = "检测完成，一切正常";
+        _step.Text = Strings.Get("CheckAllOk");
         _success = true;
-        _closeButton.Text = "完成";
+        _closeButton.Text = Strings.Get("BtnDone");
         _closeButton.Enabled = true;
         await Task.Delay(900);
         if (!IsDisposed) Close();
