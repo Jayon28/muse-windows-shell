@@ -43,6 +43,8 @@ internal sealed class Settings
     public int WindowHeight { get; set; } = 800;
     // 页面缩放（WebView2 的 ZoomFactor 不会自动持久化，必须自己存，自己恢复）
     public double ZoomFactor { get; set; } = 1.0;
+    // 退出时窗口是不是最大化，和位置大小分开记
+    public bool WindowMaximized { get; set; } = false;
     // 运行时检测只在第一次成功启动时跑，跑过就不再打扰；托盘菜单可手动重检
     public bool RuntimeCheckDone { get; set; } = false;
 
@@ -134,6 +136,8 @@ internal sealed class MainForm : Form
         {
             Size = new Size(1200, 800);
         }
+        if (_settings.WindowMaximized)
+            WindowState = FormWindowState.Maximized;
         Controls.Add(_webView);
         BuildTray();
         FormClosing += OnFormClosing;
@@ -323,17 +327,45 @@ internal sealed class MainForm : Form
 
     private void SaveWindowBounds()
     {
-        if (WindowState != FormWindowState.Normal || _exiting) return;
-        _settings.WindowX = Location.X;
-        _settings.WindowY = Location.Y;
-        _settings.WindowWidth = Size.Width;
-        _settings.WindowHeight = Size.Height;
+        if (_exiting) return;
+        SaveAllState();
+    }
+
+    // 退出时（关窗缩托盘、托盘真退出都算）把当前状态整份快照存盘：
+    // 窗口位置大小、最大化标记直接读窗口当前值，缩放直接问 WebView 要当前值，
+    // 不依赖任何变化事件有没有触发过——事件会漏，快照不会。
+    private void SaveAllState()
+    {
+        if (WindowState == FormWindowState.Maximized)
+        {
+            _settings.WindowMaximized = true;
+            _settings.WindowX = RestoreBounds.X;
+            _settings.WindowY = RestoreBounds.Y;
+            _settings.WindowWidth = RestoreBounds.Width;
+            _settings.WindowHeight = RestoreBounds.Height;
+        }
+        else if (WindowState == FormWindowState.Normal)
+        {
+            _settings.WindowMaximized = false;
+            _settings.WindowX = Location.X;
+            _settings.WindowY = Location.Y;
+            _settings.WindowWidth = Size.Width;
+            _settings.WindowHeight = Size.Height;
+        }
+        // 最小化时不动窗口记录：那不是用户想要的常态样子。
+        try
+        {
+            if (_webView.CoreWebView2 != null)
+                _settings.ZoomFactor = _webView.ZoomFactor;
+        }
+        catch { /* WebView 还没初始化就跳过缩放 */ }
         _settings.Save();
     }
 
     // 点 × 不是退出，是缩回托盘；真正的退出只走托盘右键菜单。
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
+        SaveAllState();
         if (!_exiting)
         {
             e.Cancel = true;
@@ -343,6 +375,7 @@ internal sealed class MainForm : Form
 
     private void ExitApp()
     {
+        SaveAllState();
         _exiting = true;
         _tray.Visible = false;
         Close();
