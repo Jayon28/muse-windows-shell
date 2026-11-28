@@ -104,6 +104,7 @@ internal static class Strings
         ["TrayOpen"] = "打开 Muse for Windows",
         ["TrayHotkey"] = "设置快捷键…（当前：{0}）",
         ["TrayRecheck"] = "重新检测运行时",
+        ["TrayReload"] = "重新加载页面",
         ["TrayLangSystem"] = "跟随系统",
         ["TrayExit"] = "退出",
         ["BalloonFailTitle"] = "Muse for Windows 快捷键注册失败",
@@ -139,6 +140,7 @@ internal static class Strings
         ["TrayOpen"] = "Open Muse for Windows",
         ["TrayHotkey"] = "Set hotkey… (current: {0})",
         ["TrayRecheck"] = "Re-check runtimes",
+        ["TrayReload"] = "Reload page",
         ["TrayLangSystem"] = "Follow system",
         ["TrayExit"] = "Exit",
         ["BalloonFailTitle"] = "Muse for Windows: hotkey registration failed",
@@ -247,6 +249,7 @@ internal sealed class MainForm : Form
         Move += (_, _) => SaveWindowBounds();
         Resize += (_, _) => SaveWindowBounds();
         Shown += async (_, _) => await StartupAsync();
+        Activated += (_, _) => { try { _webView.Focus(); } catch { } };
         // 第二个实例（重复点快捷方式）会发信号，让已经开着的这份把窗口呼出来。
         Task.Run(() =>
         {
@@ -326,9 +329,46 @@ internal sealed class MainForm : Form
             _settings.ZoomFactor = _webView.ZoomFactor;
             _settings.Save();
         };
+        core.ProcessFailed += OnProcessFailed;
         core.NewWindowRequested += OnNewWindowRequested;
         core.PermissionRequested += OnPermissionRequested;
         core.Navigate(HomeUrl);
+    }
+
+
+    // 页面进程出问题（崩溃/无响应）时自愈：渲染进程挂了就重载页面，
+    // 浏览器主进程没了就整个重建。每次都写一行日志，下次再犯能对上是哪种。
+    private async void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        LogWebView("ProcessFailed kind=" + e.ProcessFailedKind + " reason=" + e.Reason);
+        try
+        {
+            switch (e.ProcessFailedKind)
+            {
+                case CoreWebView2ProcessFailedKind.RenderProcessExited:
+                case CoreWebView2ProcessFailedKind.RenderProcessUnresponsive:
+                case CoreWebView2ProcessFailedKind.FrameRenderProcessExited:
+                    _webView.CoreWebView2?.Reload();
+                    break;
+                case CoreWebView2ProcessFailedKind.BrowserProcessExited:
+                    await InitWebViewAsync();
+                    break;
+            }
+        }
+        catch (Exception ex) { LogWebView("recover failed: " + ex.GetType().Name); }
+    }
+
+    private void LogWebView(string message)
+    {
+        try
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MuseShell");
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(Path.Combine(dir, "webview.log"),
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + message + Environment.NewLine);
+        }
+        catch { /* 日志写不了不影响使用 */ }
     }
 
     // 外站链接（新窗口打开的）用系统默认浏览器打开；muse.ai 自己的留在壳里。
@@ -367,6 +407,11 @@ internal sealed class MainForm : Form
         menu.Items.Add(Strings.Get("TrayOpen"), null, (_, _) => ShowWindow());
         menu.Items.Add(Strings.Format("TrayHotkey", _settings.HotkeyText()), null, (_, _) => ShowHotkeySettings());
         menu.Items.Add(Strings.Get("TrayRecheck"), null, async (_, _) => await RuntimeCheckDialog.RunAsync(this));
+        menu.Items.Add(Strings.Get("TrayReload"), null, (_, _) =>
+        {
+            try { _webView.CoreWebView2?.Reload(); } catch { /* 还没初始化就忽略 */ }
+            ShowWindow();
+        });
         // 语言菜单标题双语并排，保证任何语言下都找得到这一项；语言名用各自原文。
         var langMenu = new ToolStripMenuItem("语言 / Language");
         langMenu.DropDownItems.Add(LanguageItem(Strings.Get("TrayLangSystem"), "system"));
@@ -444,6 +489,10 @@ internal sealed class MainForm : Form
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
+        // 窗口隐藏过再呼出时，WebView2 的输入焦点可能丢失：页面还活着，但点不动、打不了字。
+        // 每次呼出都明确把焦点交还给它。
+        try { _webView.Focus(); }
+        catch { /* WebView 还没初始化就跳过 */ }
     }
 
     private void SaveWindowBounds()
